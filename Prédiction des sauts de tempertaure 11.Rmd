@@ -1,0 +1,457 @@
+---
+title: "time temp"
+output: html_document
+date: "2023-07-04"
+---
+
+
+```{r}
+
+
+library(data.table)
+library(skimr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(rAmCharts)
+library(stringi)
+library(scales)
+library(zoo)
+library(ggpubr)
+
+library(TTR)
+library(gridExtra) # to organise plots nicely 
+library(fpp2)
+
+
+set.seed(104)
+
+```
+
+1. Collecte des données:
+```{r}
+df=fread("N:/Echanges/Projets R/Time Series/temp_train.csv")
+df=tibble(df)
+
+skim(df)
+
+```
+
+
+2. Transformation des données date:
+
+```{r}
+df$Date=paste0(stringi::stri_sub(df$datetime, 7, 10),"-",stringi::stri_sub(df$datetime, 4, 5),"-",stringi::stri_sub(df$datetime, 1, 2))
+
+
+df$DateC=as.POSIXct(df$Date)
+
+df$Temp=gsub(c(","),".",as.character(df$T_mu))
+df$Temp=as.numeric(df$Temp)
+
+
+df$debit=gsub(c(","),".",as.character(df$debit_Ventulation))
+df$debit=as.numeric(df$debit)
+
+
+df2=df %>% subset(equipement=='Baie_0002')
+df1=df %>% subset(equipement=='Baie_0001')
+df3=df %>% subset(equipement=='Baie_0003')
+
+
+
+```
+
+
+```{r}
+m=df %>% subset(equipement=='Baie_0001') %>% ggplot(aes(x=DateC, y=Temp)) + geom_line() 
+    
+
+ggplotly(m)
+
+```
+
+
+3. Caractéristiques statistiques:
+
+```{r}
+TT=ggplot(df)+ 
+  geom_boxplot(mapping=aes(y=df$Temp)) + 
+  ggtitle("Boîte à moustache des mesures de temperature")+
+  labs(y="temperature (en °C)")
+
+ggplotly(TT)
+
+VV=ggplot(df)+ 
+  geom_boxplot(mapping=aes(y=df$debit)) + 
+  ggtitle("Boîte à moustache des mesures du débit de ventulation")+
+  labs(y="débit de ventilation (en tr/s)")
+ggplotly(VV)
+
+```
+
+
+4. Tracé des données de séries chronologiques
+
+4.1 Profil journalier des données:
+
+On cherche à observer les périodicités sur notre série en général avant de la modéliser. On va donc tracer les données sur plusieurs periode.
+
+```{r}
+amTimeSeries(df3,"DateC", c("Temp","debit"),groupToPeriods=c('DD'),main = "Baie_0003")
+amTimeSeries(df2,"DateC", c("Temp","debit"),groupToPeriods=c('DD'),main = "Baie_0002")
+amTimeSeries(df1,"DateC", c("Temp","debit"),groupToPeriods=c('DD'),main = "Baie_0001")
+```
+
+
+4.2 Profil mentuiel des données:
+
+```{r}
+amTimeSeries(df3,"DateC", c("Temp","debit"),groupToPeriods=c('DD','MM'), bullet = 'round',main = "Baie_0003")
+amTimeSeries(df2,"DateC", c("Temp","debit"),groupToPeriods=c('DD','MM'), bullet = 'round',main = "Baie_0002")
+amTimeSeries(df1,"DateC", c("Temp","debit"),groupToPeriods=c('DD','MM'), bullet = 'round',main = "Baie_0001")
+```
+
+4.3 Profil Annuel des données:
+
+```{r}
+amTimeSeries(df3,"DateC", c("Temp","debit"),groupToPeriods=c('YYYY'), bullet = 'round',main = "Baie_0003")
+amTimeSeries(df2,"DateC", c("Temp","debit"),groupToPeriods=c('YYYY'), bullet = 'round',main = "Baie_0002")
+amTimeSeries(df1,"DateC", c("Temp","debit"),groupToPeriods=c('YYYY'), bullet = 'round',main = "Baie_0001")
+```
+
+5.Test de corrélation linéaire Pearson:
+
+5.1 Calcul de coefficient de corrélation:
+
+pour etre sur de notre choix on measures la  dependence lineaire entre  la temperature et le debit de ventulation dans un profil journalier
+
+```{r}
+#Baie001:
+cor(df1$Temp,df1$debit,method="pearson")
+
+#Baie002:
+cor(df2$Temp,df2$debit,method="pearson")
+
+#Baie003:
+cor(df3$Temp,df3$debit,method="pearson")
+```
+Interpretation : plus le coefficient de corrélation est proche de 0 , plus les variables sont linéairement corrélés.
+
+5.2 visualisation de la  dependence lineaire entre  la temperature et le debit de ventulation dans un profil journalier
+
+```{r}
+
+ggscatter(df2, x = "Temp", y = "debit", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Temperature en °C", ylab = "débit de ventilation (en tr/s)")+ggtitle("Baie_0002")
+ggscatter(df1, x = "Temp", y = "debit", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Temperature en °C", ylab = "débit de ventilation (en tr/s)")+ggtitle("Baie_0001")
+ggscatter(df3, x = "Temp", y = "debit", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Temperature en °C", ylab = "débit de ventilation (en tr/s)")+ggtitle("Baie_0003")
+```
+
+```{r}
+ggplot(df)+aes(x=Temp,y=debit,color=equipement)+geom_point()+ggtitle("correlation")
+```
+interprétation:
+
+ BAIE001 : les tendances de la température définies par les mouvements saisonniers avec une légère tendance à la hausse à partir de l'année 2010.
+
+6. Décomposition des séries temporelles: 
+
+L'objectif est de décomposer les séries temporelles de chaque équipement et d'exrtraire les composantes tendancielles, saisonnières sans résidus, afin de pouvoir prédir les niveaux de température ou de prévoir des éventuels sauts de température futur.
+
+pour ce faire tout d'abord on stock les données dans un objet de séries chronologiques dans R:
+
+          - Baie001 --> SERI1
+          - Baie002 --> SERI2
+          - Baie003 --> SERI3
+
+
+
+6.1 visualisation de série chnologique de l'équipement Baie001:
+```{r}
+SERI1=ts(df1$Temp,frequency=300, start=c(2006, 1), end=c(2016, 1))
+
+
+ptheme=theme(aspect.ratio = 2/3,text=element_text(size=10), 
+                 axis.title = element_text(size=9))
+autoplot(SERI1)+ylab("Temperature")+xlab("Year")+ptheme+ggtitle("Signal aprés Lissage avec la Moyenne mobile 50")
+```
+6.2 Lisssage des données:
+
+```{r}
+SERI1= SMA(SERI1,n=5)
+
+SERI1=ts(SERI1,frequency=300, start=c(2006, 1), end=c(2016, 1))
+plot(SERI1)
+```
+ Les données lissées avec une moyenne mobile simple d'ordre 5 donnent une image plus claire de la composante tendancielle,
+
+
+6.3 décomposition de la série chnologique de l'équipement Baie001:
+
+```{r}
+DECOMPDF1=decompose(SERI1)
+ptheme=theme(aspect.ratio = 2/3,text=element_text(size=10), axis.title = element_text(size=9))
+autoplot(DECOMPDF1)
+```
+interprétation: la serie présentent seulment deux composante stationnaire et irrégulière.
+
+
+6.2 ajustement la série chnologique de l'équipement Baie001:
+
+extraction des deux composantes saisonnière et tendancielle par la soustraction de la compsante irrégulière(random)
+
+```{r}
+DECOMPDF1_TD=SERI1-DECOMPDF1$random
+DECOMPDF1_TD=na.omit(DECOMPDF1_TD)
+
+ptheme=theme(aspect.ratio = 2/3,text=element_text(size=10), axis.title = element_text(size=9)) 
+autoplot(DECOMPDF1_TD)
+
+```
+
+Interprétation : 
+
+7. Appliquer des modèles de prévisions:
+
+7.1 montage avec Holtwinters (Lissage automatique)
+
+Avant de prédire les valeurs à l'avenir, nous devrons créer un ajustement aux données. Dans la méthode la plus basique, nous pouvons simplement appeler la fonction Holt-Winters et laisser R déterminer lui-même les paramètres de réglage. Nous avons également la possibilité d'ajuster l'ajustement manuellement en définissant des variables d'ajustement :
+
+alpha: la "valeur de base". Un alpha plus élevé donne plus de poids aux observations les plus récentes.
+beta: la "valeur de tendance". Un bêta plus élevé signifie que la pente de la tendance dépend davantage des pentes de la tendance récente.
+gamma: la « composante saisonnière ». Un gamma plus élevé donne plus de poids aux cycles saisonniers les plus récents.
+
+Les ajustements standard de Holt-Winters utilisent deux type de saisonnalité:
+
+  * une saisonnalité additive - où ils supposent que l'amplitude de toute composante de saisonnalité est relativement constante tout au long de la série.
+  * une saisonnalité multiplicative , nous permettons aux variations saisonnières (amplitude) de croître avec le niveau global des données.
+
+
+A- Appliquant Holtwinter avec un ajustement additif:
+
+```{r}
+Model_df11=HoltWinters(DECOMPDF1_TD,alpha=0.2, beta=0.2, gamma=0.5) 
+```
+
+Évaluer visuellement les ajustements :
+
+```{r}
+plot(DECOMPDF1_TD, ylab="Temperature", xlim=c(2006,2016)) 
+lines(Model_df11$fitted [,1], lty=2, col="red")
+```
+l'ajustement semblent assez bien suit nos données, 
+
+```{r}
+PREVISION_SERIE1=forecast:::forecast.HoltWinters(Model_df11,h=700)
+```
+
+
+il est donc temps de voir comment ils prédisent la production future de température.
+
+visualisation des prévisions:
+
+```{r}
+
+forecast:::plot.forecast(PREVISION_SERIE1)
+```
+le résultat permet de visualiser aussi un concept des «plages d'erreur» associées à la prédiction pour nous donner une idée de la confiance de notre prédiction
+
+Comme nous pouvons le voir, la prédiction ressemble assez logique, mais les intervalles de confiance s'étendent énormément vers l'extérieur.
+
+
+Visualisation de la densité d'erreur:
+
+```{r}
+plotForecastErrors=function(forecasterrors)
+  {
+     # make a histogram of the forecast errors:
+     mybinsize <- IQR(forecasterrors)/4
+     mysd   <- sd(forecasterrors)
+     mymin  <- min(forecasterrors) - mysd*5
+     mymax  <- max(forecasterrors) + mysd*3
+     # generate normally distributed data with mean 0 and standard deviation mysd
+     mynorm <- rnorm(10000, mean=0, sd=mysd)
+     mymin2 <- min(mynorm)
+     mymax2 <- max(mynorm)
+     if (mymin2 < mymin) { mymin <- mymin2 }
+     if (mymax2 > mymax) { mymax <- mymax2 }
+     # make a red histogram of the forecast errors, with the normally distributed data overlaid:
+     mybins <- seq(mymin, mymax, mybinsize)
+     hist(forecasterrors, col="red", freq=FALSE, breaks=mybins)
+     # freq=FALSE ensures the area under the histogram = 1
+     # generate normally distributed data with mean 0 and standard deviation mysd
+     myhist <- hist(mynorm, plot=FALSE, breaks=mybins)
+     # plot the normal curve as a blue line on top of the histogram of forecast errors:
+     points(myhist$mids, myhist$density, type="l", col="blue", lwd=2)
+  }
+```
+
+
+```{r}
+plotForecastErrors(na.omit(PREVISION_SERIE1$residuals))
+```
+
+B- Appliquant Holtwinter avec un ajustement multiplicatif:
+
+```{r}
+Model_df1_MP=HoltWinters(DECOMPDF1_TD,alpha=0.2, beta=0.5, gamma=0.5,season = "multiplicative") 
+PREVISION_SERIE1_M=forecast:::forecast.HoltWinters(Model_df1_MP,h=700)
+forecast:::plot.forecast(PREVISION_SERIE1_M)
+
+```
+
+les intervalles de confiance toujours s'étendent énormément vers l'extérieur.
+
+```{r}
+plotForecastErrors(na.omit(PREVISION_SERIE1_M$residuals))
+```
+on voit claire que la distrubution des erreure suit une loi normale ce qui est bien mais il dépasse énormément la densité 
+
+conclusion:
+
+Pour cet ensemble de données, l'ajustement Holtwinter ne semble pas être la voie à suivre.
+
+
+7.2 montage avec Prophet :
+
+Ce modèle a été introduit par Facebook ( SJ Taylor & Letham, 2018 ) , à l'origine pour prévoir des données quotidiennes avec une saisonnalité hebdomadaire et annuelle, ainsi que des effets de vacances. Il a ensuite été étendu pour couvrir davantage de types de données saisonnières. Cela fonctionne mieux avec des séries chronologiques qui ont une forte saisonnalité et plusieurs saisons de données historiques.
+
+```{r}
+library(modeltime)
+library(tidymodels)
+library(tidyverse)
+library(lubridate)
+library(timetk)
+
+```
+
+
+
+```{r}
+
+df=tibble(df1)
+
+seri33 = df %>% select(c("Temp","Date")) %>% drop_na()
+seri33$Date = ymd(seri33$Date)
+
+df_split = initial_time_split(seri33, prop = 0.7) #IT SEEMS THAT THIS CREATES THE PROBLEM  
+```
+
+```{r}
+model_fit_prophet = prophet_reg() %>% set_engine(engine = "prophet") %>% fit(Temp ~ Date, data = training(df_split))
+
+calibration_prophet = model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+calibration_prophet %>% modeltime_forecast(new_data = testing(df_split), actual_data = seri33) %>% plot_modeltime_forecast(.legend_max_width = 20, .interactive = interactive)
+```
+
+Réajuster à l'ensemble de données complet et aux prévisions à venir
+
+```{r}
+calibtotal= model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+refit_tbl <- calibtotal %>%
+    modeltime_refit(data = seri33)
+refit_tbl %>%
+    modeltime_forecast(h = "3 years", actual_data = seri33) %>%
+    plot_modeltime_forecast(
+      .legend_max_width = 25, # For mobile screens
+      .interactive      = interactive
+    )
+```
+
+
+Conclusion le modèle de prophet semble plus robuste à ce type de 
+qui ce caractérisent par évolution tendancielle et 
+
+-BAIE002:
+
+
+
+```{r}
+
+df=tibble(df2)
+
+
+seri33 = df %>% select(c("Temp","Date")) %>% drop_na()
+seri33$Date = ymd(seri33$Date)
+
+df_split = initial_time_split(seri33, prop = 0.7) #IT SEEMS THAT THIS CREATES THE PROBLEM  
+```
+
+```{r}
+model_fit_prophet = prophet_reg() %>% set_engine(engine = "prophet") %>% fit(Temp ~ Date, data = training(df_split))
+
+calibration_prophet <- model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+calibration_prophet %>% modeltime_forecast(new_data = testing(df_split), actual_data = seri33) %>% plot_modeltime_forecast(.legend_max_width = 20, .interactive = interactive)
+```
+
+Réajuster à l'ensemble de données complet et aux prévisions à venir
+
+```{r}
+calibtotal= model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+refit_tbl <- calibtotal %>%
+    modeltime_refit(data = seri33)
+refit_tbl %>%
+    modeltime_forecast(h = "3 years", actual_data = seri33) %>%
+    plot_modeltime_forecast(
+      .legend_max_width = 25, # For mobile screens
+      .interactive      = interactive
+    )
+```
+
+-BAIE003:
+
+
+```{r}
+df=tibble(df3)
+seri33 = df %>% select(c("Temp","Date")) %>% drop_na()
+seri33$Date = ymd(seri33$Date)
+df_split = initial_time_split(seri33, prop = 0.7) #IT SEEMS THAT THIS CREATES THE PROBLEM  
+
+interactive=TRUE
+```
+
+```{r}
+model_fit_prophet = prophet_reg() %>% set_engine(engine = "prophet") %>% fit(Temp ~ Date, data = training(df_split))
+
+calibration_prophet=model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+p5=calibration_prophet %>% modeltime_forecast(new_data = testing(df_split), actual_data = seri33) %>% plot_modeltime_forecast(.legend_max_width = 20, 
+                                                                                                                           .interactive = TRUE)
+
+ggplotly(p5)
+```
+
+Réajuster à l'ensemble de données complet et aux prévisions à venir
+
+```{r}
+calibtotal= model_fit_prophet %>% modeltime_calibrate(new_data = testing(df_split))
+
+refit_tbl <- calibtotal %>%
+    modeltime_refit(data = seri33)
+refit_tbl %>%
+    modeltime_forecast(h = "3 months","6 months","12 months", actual_data = seri33) %>%
+    plot_modeltime_forecast(
+      .legend_max_width = 25, # For mobile screens
+      .interactive      = interactive
+    )
+```
+
+
+ Decomposition:
+ 
+ 
+
